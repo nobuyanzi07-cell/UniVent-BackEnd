@@ -1,5 +1,11 @@
+# Python
+.venv/
 venv/
 __pycache__/
-.pytest_cache/
 *.pyc
+.pytest_cache/
+
+# Local settings and databases
 .env
+*.db
+instance/
