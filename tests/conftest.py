@@ -1,17 +1,19 @@
 import pytest
 
 from app import create_app
-from app.services.ticketmaster import clear_cache
+from app.extensions import db
 
 
-@pytest.fixture
+@pytest.fixture()
 def app():
     app = create_app("testing")
-    clear_cache()
-    yield app
-    clear_cache()
+    with app.app_context():
+        db.create_all()
+        yield app
+        db.session.remove()
+        db.drop_all()
 
 
-@pytest.fixture
+@pytest.fixture()
 def client(app):
     return app.test_client()

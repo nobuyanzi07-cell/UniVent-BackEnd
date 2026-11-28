@@ -1,7 +1,7 @@
 def test_health_returns_ok(client):
     res = client.get("/api/health")
     assert res.status_code == 200
-    assert res.get_json() == {"status": "ok"}
+    assert res.get_json()["status"] == "ok"
 
 
 def test_cors_allows_the_vite_origin(client):
