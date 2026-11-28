@@ -1,7 +1,7 @@
 """Club CRUD (docs/API.md, KAN-24).
 
-GET    /api/clubs?university=   list, sorted by name
-GET    /api/clubs/<id>          one club
+GET    /api/clubs?university=   list, sorted by name (university = name or id)
+GET    /api/clubs/<id>          one club, with its events
 POST   /api/clubs               create (201)
 PATCH  /api/clubs/<id>          update the fields that are sent
 DELETE /api/clubs/<id>          204, or 409 while the club still has events
@@ -11,15 +11,14 @@ import re
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func
 
-from app.constants import UNIVERSITIES
 from app.errors import ApiError
 from app.extensions import db
-from app.models import Club, Event
+from app.models import Club, Event, University
 
 clubs_bp = Blueprint("clubs", __name__, url_prefix="/api/clubs")
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-FIELDS = ("name", "university", "description", "contact_email", "logo_url")
+FIELDS = ("name", "university_id", "description", "contact_email", "logo_url")
 FIX_FIELDS = "Please fix the highlighted fields."
 
 
@@ -35,6 +34,19 @@ def _get_club(club_id):
     if club is None:
         raise ApiError(404, "Club not found.")
     return club
+
+
+def _find_university(data):
+    """Find the University row from 'university_id' (a number) or 'university' (its name)."""
+    if "university_id" in data:
+        university_id = data["university_id"]
+        if isinstance(university_id, int) and not isinstance(university_id, bool):
+            return db.session.get(University, university_id)
+        return None
+    name = data.get("university")
+    if isinstance(name, str) and name.strip():
+        return University.query.filter_by(name=name).first()
+    return None
 
 
 def _validate(data, club=None):
@@ -54,14 +66,16 @@ def _validate(data, club=None):
         else:
             clean["name"] = name.strip()
 
-    if sent("university"):
-        university = data.get("university")
-        if not isinstance(university, str) or not university.strip():
+    if "university" in data or "university_id" in data or not partial:
+        raw = data.get("university_id", data.get("university"))
+        if raw in (None, ""):
             errors["university"] = "University is required."
-        elif university not in UNIVERSITIES:
-            errors["university"] = "Choose a supported university."
         else:
-            clean["university"] = university
+            university = _find_university(data)
+            if university is None:
+                errors["university"] = "Choose a supported university."
+            else:
+                clean["university_id"] = university.id
 
     if sent("description"):
         description = data.get("description")
@@ -90,11 +104,11 @@ def _validate(data, club=None):
 
     # Name must be unique within a university (checked on the final values)
     final_name = clean.get("name", club.name if club else None)
-    final_university = clean.get("university", club.university if club else None)
+    final_university = clean.get("university_id", club.university_id if club else None)
     if "name" not in errors and "university" not in errors and final_name and final_university:
         query = Club.query.filter(
             func.lower(Club.name) == final_name.lower(),
-            Club.university == final_university,
+            Club.university_id == final_university,
         )
         if club:
             query = query.filter(Club.id != club.id)
@@ -104,8 +118,8 @@ def _validate(data, club=None):
     # An event's university must match its club's, so it can't change under events
     if (
         club
-        and "university" in clean
-        and clean["university"] != club.university
+        and "university_id" in clean
+        and clean["university_id"] != club.university_id
         and club.events
     ):
         errors["university"] = (
@@ -120,14 +134,17 @@ def list_clubs():
     query = Club.query
     university = request.args.get("university")
     if university:
-        query = query.filter(Club.university == university)
+        if university.isdigit():
+            query = query.filter(Club.university_id == int(university))
+        else:
+            query = query.join(University).filter(University.name == university)
     clubs = query.order_by(func.lower(Club.name)).all()
     return jsonify([club.to_dict() for club in clubs])
 
 
 @clubs_bp.get("/<int:club_id>")
 def get_club(club_id):
-    return jsonify(_get_club(club_id).to_dict())
+    return jsonify(_get_club(club_id).to_dict(include_events=True))
 
 
 @clubs_bp.post("")
@@ -164,3 +181,4 @@ def delete_club(club_id):
     db.session.delete(club)
     db.session.commit()
     return "", 204
+    
