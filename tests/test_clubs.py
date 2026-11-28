@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime
 
 from app.constants import UNIVERSITIES
 from app.extensions import db
@@ -25,15 +25,16 @@ def make_club(client, **overrides):
     return res.get_json()
 
 
-def add_event(club_id, university=UNI_A):
+def add_event(club_id):
+    club = db.session.get(Club, club_id)
     event = Event(
-        name="Hack Night",
+        title="Hack Night",
         category="Technology",
         description="Build something.",
-        start_date=date(2030, 1, 1),
+        start_at=datetime(2030, 1, 1, 18, 0),
         venue="Main Hall",
         city="Nairobi",
-        university=university,
+        university_id=club.university_id,
         club_id=club_id,
     )
     db.session.add(event)
@@ -78,7 +79,7 @@ def test_get_returns_the_club(client):
     created = make_club(client)
     res = client.get(f"/api/clubs/{created['id']}")
     assert res.status_code == 200
-    assert res.get_json() == created
+    assert res.get_json() == {**created, "events": []}
 
 
 def test_get_missing_club_is_404(client):
@@ -235,3 +236,16 @@ def test_delete_is_blocked_while_the_club_has_events(client, app):
     assert res.status_code == 409
     assert res.get_json()["error"]["message"] == "Club still has events."
     assert db.session.get(Club, created["id"]) is not None
+
+
+
+def test_get_club_includes_its_events(client, app):
+    created = make_club(client)
+    add_event(created["id"])
+
+    res = client.get(f"/api/clubs/{created['id']}")
+
+    assert res.status_code == 200
+    events = res.get_json()["events"]
+    assert len(events) == 1
+    assert events[0]["title"] == "Hack Night"
